@@ -1,0 +1,287 @@
+---
+title: "ScrewCaps Analysis"
+author: "Benoit Audigier"
+date: "16 novembre 2017"
+output: html_document
+---
+# ScrewCaps
+
+<div style="text-align: justify">
+
+### Data and libraries
+
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(vioplot)
+library(FactoMineR)
+library(cluster)
+library(fpc)
+library(gbm)
+
+sc <- read.table("ScrewCaps.csv",header=TRUE, sep=",", row.names=1)
+summary(sc)
+```
+
+### Cleaning up the data
+
+```{r, echo=FALSE}
+d <- density(sc$Mature.Volume)
+hist(sc$Mature.Volume, breaks=40, probability = TRUE)
+lines(d, col = "red")
+```
+
+We have a few variables that are incoherent with the rest since thec are really far from the rest of the distribution without any valid reason regarding the other characteristics. We can assume there is an error here.
+
+```{r}
+sc <- sc %>% filter(Mature.Volume < 600000)
+```
+
+The others categories of the elements removed are quite normal (between the first and the third quarter), hence the idea of an error. By computing the others distribution, we do not notice any other outlier.
+
+```{r, echo=FALSE}
+hist(sc$Mature.Volume, breaks=40, probability = TRUE)
+```
+
+### First exploration
+
+Let's analyse the variables. Let's have a look at the price distribution first.
+
+```{r, echo=FALSE}
+d <- density(sc$Price)
+hist(sc$Price, breaks=40, probability = TRUE)
+lines(d, col = "red")
+vioplot(sc$Price, horizontal=TRUE, col="gray")
+```
+```{r}
+quantile(sc$Price)
+```
+
+The distribution looks a bit like the sum of two normal distribution. One of them is much higher than the other one; we can distinguish 'low cost' screw caps from the 'luxury' ones.
+Most of them are 'low cost' though: 75% are between 6.5\$ and 19\$, which is the fork for the low budget caps.
+
+Does the Price depend on the Length? On the weight?
+
+```{r, echo=FALSE}
+ggplot(sc, aes(x = sc$Price, y = sc$Length)) + geom_point() + geom_smooth(method = lm) + ggtitle("Length function of Price")
+
+ggplot(sc, aes(x = sc$Price, y = sc$weight)) + geom_point() + geom_smooth(method = lm) + ggtitle("Weight function of Price")
+
+ggplot(sc, aes(x = sc$Length, y = sc$weight)) + geom_point() + geom_smooth(method = lm) + ggtitle("Weight function of Price")
+```
+
+We can see that a global trend can be noticed for this graphs, which must however be used with caution. Indeed, the variance around the regression line is not as small as it could be if there was a strong link between the two variables (Length/Price, Weight/Price). For example, comparing to the curve between Length and Weight (which is easily understandable), the variance is much smaller.
+
+Does the Price depend on the Impermeability? On the Shape?
+
+```{r, echo=FALSE}
+boxplot(Price ~ Impermeability, data = sc, xlab = "Type of Impermeability", ylab = "Price", varwidth = TRUE, col = "lightblue", horizontal=T)
+```
+
+We can see with this plot that the impermeability has an influence on the price, since Type 2 is more explansive (more than 75% of type 2 has a price > 100% of Type 1). However, it is not a 100% determining criteria since they still intersect.
+A logistic regression could be very interesting here.
+
+```{r, echo=FALSE}
+boxplot(Price ~ Shape, data = sc, xlab = "Type of Shape", ylab = "Price", varwidth = TRUE, col = "lightblue", horizontal=T)
+```
+
+This graphs seems much more random than previously. We can see that Shape 3 is cheaper than Shape 4, and that globally Shape 1 is cheaper than Shape 2. However, all the shape taken into account, we can argue that the Shape does not really depends on the price since a clear hierarchy is not established with this graph.
+
+Which is the less expensive Supplier?
+
+```{r}
+Price_avg <- sc %>% select(Supplier,Price) %>% group_by(Supplier) %>% summarise(Average_Price = mean(Price))  
+
+Price_min <- sc %>% select(Supplier,Price) %>% group_by(Supplier) %>% summarise(Min_Price = min(Price))
+
+boxplot(Price ~ Supplier, data = sc, xlab = "Type of Shape", ylab = "Price", varwidth = TRUE, col = "lightblue", horizontal=T)
+
+head(Price_avg)
+head(Price_min)
+```
+
+There are two answers for that question. the Supplier that offers the best price without looking at the other characteristics is the Supplier B (6.48\$). However, in term of average, the supplier that has the lowest average, (14,89\$), though this is not representative of the representation of the distribution).
+
+### Principal Componant Analysis
+
+By computing the PCA, we can read the inertia (which represents at which point each eigen value is important compared to the others), and analyse the projection thanks to the graphs plotted. In the "ideal" graph, all the variables are correlated to the two first, so are colinear to the axes of our circle, with a respectable length (loss of dimension), which means that the two variable chosen describe very well the dataset.
+The categories variables are displayed on the first graph, by computing the average of the coordinates of the observations that have the same category.
+
+```{r}
+pca <- PCA(sc, quali.sup = c(1, 5, 6, 7, 9), quanti.sup = 10)
+```
+
+#### Study of the Correlation Matrix
+
+```{r}
+
+X <- as.matrix(sqrt((nrow(sc))/(nrow(sc)-1))*scale(as.matrix(sc %>% select(-c(1, 5, 6, 7, 9, 10)))))
+V <- (t(X) %*% X) / nrow(X)
+# cov offers a better precision
+V <- cov(X)
+V
+```
+With this matrix we can confirm that Diameter, Lenght and Weight are higly correlated, and confirm the fact that it's not the cas for the volume, which is not really correlated to the dimensions, and even more for the number of pieces. We can see the same on the correlation circle with the angles, where a right angle means independancy and colinear vectors are higly correlated.
+
+#### Categorical Values:
+
+PCA focuses on numeric values. That is a problem for this dataset where the price depends on them, especially the Impermability. We need to take them into account.
+
+#### Analysis
+
+<strong>About the PCA:</strong>
+We have a percentage of inertia that is around 84% for the two first eigen values, and more than 95% if we use the three first. This means that around 95% of the data is explained by the projection of the observations onto three normalized eigen vectors associated to the three biggest eigen values.
+We can also notice that Length, Weight, Diameters and Price are highly correlated (espacially the three characteristics of the dimensions of the caps), and very well explained by the first eigen vector. On the other hand, Mature volume and Number of pieces are betterly explained by the second eigen vector, and are not correlated to the Price (almost a right angle).
+
+<strong>About Type2 and PS:</strong>
+Type 2 and PS are really close to each other, meaning that it is probable that they are linked (not 100% sure though; it's just a mean). We can see that they are on the first axis, meaning that this first axis can explain these categories, whereas they not related to the second axis, since the mean of the coordinates of the observation that have these characteristics is approximatly zero.
+
+### Coordinates of the two first dimensions
+
+We need two eigen vectors of the two larger eigen values, to get the coordinates of the observation projected onto those two vectors.
+
+```{r}
+pca$var$coord[,1:2]
+```
+
+
+### About the inertia
+
+Thanks to the inertia, we can see that more than 95% of the data is explained by the projections on the three first eigen values. This means that projecting simplifies the dataset, removes maybe noise and get the calculation done faster thanks to the reduction of dimension.
+
+### Clusterisation
+
+```{r}
+clust <- kmeans(pca$ind$coord[,1:3], 3)
+
+km <- function(i) return(kmeans(pca$ind$coord[,1:3], i)$tot.withinss)
+clust_tab = c()
+k_tab = 1:15
+for(i in k_tab) clust_tab <- c(clust_tab, km(i))
+```
+
+```{r, echo=FALSE}
+plot(k_tab, clust_tab)
+plotcluster(pca$ind$coord, clust$cluster)
+```
+
+To decide the number of cluster, we use the elbow method. We indeed chose the number of cluster that minimizes the cost function, without too many of them. We chose the number of cluster where there is not that much difference between n and n+1 but a step between n and n-1. Here in this example, we can chose n = 3.
+
+```{r}
+pca <- PCA(sc, quali.sup = c(1, 5, 6, 7, 9), quanti.sup = 10, ncp = 3)
+```
+
+We use hcpc on the last pca, done with 3 dimensions.
+
+```{r}
+hcpc <- HCPC(pca, nb.clust = -1)
+```
+```{r, echo=FALSE}
+plot(hcpc$call$t$within[k_tab])
+```
+
+### Description of the clusters
+
+We have the same number of cluster if we let the algorithm choose, and we can confirm this number by using the elbow method on the representation of the cost function.
+
+We now want to describe a cluster.
+We need first to identify the variables that play a role in the clusterization.
+We display the result of the fisher test computed, for the continuous variables:
+
+```{r}
+hcpc$desc.var$quanti.var
+```
+As we can see, all the p-values are low (<<0.05), and the dimensions explain better than the others variables (we remember the projection on the first axis in the PCA; this is not a suprise).
+
+The same is done via a chi squared test for the qualitative variables:
+```{r}
+hcpc$desc.var$test.chi2
+```
+Here, the Finishing seems not to be a determining variable, whereas Impermeability and Raw.Material are the most decisive ones.
+
+
+To describe one cluster in particular, the number 3 for example:
+For the quantitative variables:
+```{r}
+hcpc$desc.var$quanti$`3`
+```
+
+We have here the mean and standard deviation of all the categories in the cluster number 3. We can see that the three dimensions (Length, Diameter and Weight) are more decisive to get into this cluster than the other variables.
+
+For the categorical variables:
+```{r}
+hcpc$desc.var$category$`3`
+```
+We can see here that Shape=Shape 2 is a relevant value to discriminate observation into the cluster 3 given the p-values.
+
+```{r}
+catdes(sc, num.var=1)
+```
+
+One can notice that this function prints out the characteristics of clusters following a catagery, here Supplier A, B or C. We can then try to describe the main features of a supplier, which is extremely useful for a company, to understand each supplier's strength, line of business and differentiate them. In this example, we can see that Raw Materials plays an important role in the distinction between suppliers, with A using mostly PS, B : ABS and C : PP.
+
+### About the eigen values
+
+```{r}
+pca$eig
+```
+
+The choice of the number of the components kept is explained with an elbow method on the percentage of importance of the eigen values. With 99.02%, we keep most of the data, and adding the 4th and 5th components won't change much, as we can see if we clusterize using 5 components.
+
+### Taking Categorical Values into account, FAMD
+
+```{r}
+famd = FAMD(sc, ncp = 10, sup.var = c(10))
+hcpc <- HCPC(famd, nb.clust = -1, graph =  FALSE)
+plot.HCPC(hcpc) 
+```
+FAMD takes into account more paramaters, which means more data that are not necessarly correlated to the previous ones, meaning we need more dimension to represent with enough accuracy the data. To reach 95% for the cumulative percentage of variance, we need 10 dimensions. 
+With these new graphs, we can assume that the price is related to Impermeability and partially to Raw Material, and not with the Supplier: using the rgaph of the variables, we can see that the former depend mostly of axis 1 and the later axis 2. Shape is in between.
+
+### Regression and tests
+
+We need for the regression to be able to test it, by training the coefficient on a part of the dataset and testing it on the other part.
+```{r}
+iTest <- sample(x=1:nrow(sc), size=floor(0.2*nrow(sc)))
+scTest <- sc[iTest,]
+scTraining <- sc[-iTest,]
+
+
+fit <- lm(Price ~ Diameter + Length + weight, data=scTraining)
+summary(fit)
+```
+```{r}
+pred <- predict.lm(fit,scTest)
+real <- scTest$Price
+recap <-  data_frame(pred,real)
+recap$diff <- abs(pred-real)
+quantile(recap$diff)
+```
+
+```{r, echo=FALSE}
+ggplot(recap, aes(x= real)) + geom_point(aes(y = pred), color = "red") + geom_line(aes(y= real), color = "blue")
+```
+
+
+We can see that the model is not perfect, but we can predict with an error of around 3\$ 50% of the data and 4\$ for 75%.
+The previous analysis allow us to explain to the most far away points, because of the irrelevance of certain categories.
+
+The supplier does not havec an influence on the price (using the PCA), so treating them seperatly do not bring anything.
+
+### About the missing values
+
+One could suggest adding a predefined value to all the missing values. However, adding 0 or the median is not a good idea since it changes the relation between the variables, and falsifies the variance of the variable. A better idea would be to use a stochastic approach, by using randomness. The idea of adding a new category "missing" is dangerous. Indeed, the fact that the data is missing has nothing to do with the price itself; however, adding a new category would be taken into account as a possible explaination for the price.
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
